@@ -1,0 +1,2 @@
+import:
+  - satori://code/python/ruff.yml
