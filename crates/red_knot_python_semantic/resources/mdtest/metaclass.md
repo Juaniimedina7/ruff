@@ -163,10 +163,11 @@ reveal_type(B.__class__)  # revealed: Literal[M]
 ## Non-class
 
 When a class has an explicit `metaclass` that is not a class, but is a callable that accepts
-`type.__new__` arguments, we should return the meta type of its return type.
+`type.__new__` arguments, we should return the meta-type of its return type.
 
 ```py
-def f(*args, **kwargs) -> int: ...
+def f(*args, **kwargs) -> int:
+    return 1
 
 class A(metaclass=f): ...
 
@@ -205,7 +206,7 @@ reveal_type(D.__class__)  # revealed: Literal[SignatureMismatch]
 
 Retrieving the metaclass of a cyclically defined class should not cause an infinite loop.
 
-```py path=a.pyi
+```pyi
 class A(B): ...  # error: [cyclic-class-definition]
 class B(C): ...  # error: [cyclic-class-definition]
 class C(A): ...  # error: [cyclic-class-definition]

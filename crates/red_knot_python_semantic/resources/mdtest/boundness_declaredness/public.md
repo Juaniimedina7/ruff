@@ -36,7 +36,9 @@ In particular, we should raise errors in the "possibly-undeclared-and-unbound" a
 If a symbol has a declared type (`int`), we use that even if there is a more precise inferred type
 (`Literal[1]`), or a conflicting inferred type (`str` vs. `Literal[2]` below):
 
-```py path=mod.py
+`mod.py`:
+
+```py
 from typing import Any
 
 def any() -> Any: ...
@@ -61,11 +63,14 @@ reveal_type(d)  # revealed: int
 If a symbol is declared and *possibly* unbound, we trust that other module and use the declared type
 without raising an error.
 
-```py path=mod.py
+`mod.py`:
+
+```py
 from typing import Any
 
 def any() -> Any: ...
-def flag() -> bool: ...
+def flag() -> bool:
+    return True
 
 a: int
 b: str
@@ -93,7 +98,9 @@ reveal_type(d)  # revealed: int
 Similarly, if a symbol is declared but unbound, we do not raise an error. We trust that this symbol
 is available somehow and simply use the declared type.
 
-```py path=mod.py
+`mod.py`:
+
+```py
 from typing import Any
 
 a: int
@@ -114,11 +121,14 @@ reveal_type(b)  # revealed: Any
 If a symbol is possibly undeclared but definitely bound, we use the union of the declared and
 inferred types:
 
-```py path=mod.py
+`mod.py`:
+
+```py
 from typing import Any
 
 def any() -> Any: ...
-def flag() -> bool: ...
+def flag() -> bool:
+    return True
 
 a = 1
 b = 2
@@ -151,8 +161,13 @@ inferred types. This case is interesting because the "possibly declared" definit
 same as the "possibly bound" definition (symbol `b`). Note that we raise a `possibly-unbound-import`
 error for both `a` and `b`:
 
-```py path=mod.py
-def flag() -> bool: ...
+`mod.py`:
+
+```py
+from typing import Any
+
+def flag() -> bool:
+    return True
 
 if flag():
     a: Any = 1
@@ -179,8 +194,11 @@ b = None
 If a symbol is possibly undeclared and definitely unbound, we currently do not raise an error. This
 seems inconsistent when compared to the case just above.
 
-```py path=mod.py
-def flag() -> bool: ...
+`mod.py`:
+
+```py
+def flag() -> bool:
+    return True
 
 if flag():
     a: int
@@ -206,7 +224,9 @@ If a symbol is *undeclared*, we use the union of `Unknown` with the inferred typ
 treat this case differently from the case where a symbol is implicitly declared with `Unknown`,
 possibly due to the usage of an unknown name in the annotation:
 
-```py path=mod.py
+`mod.py`:
+
+```py
 # Undeclared:
 a = 1
 
@@ -229,8 +249,11 @@ a = None
 If a symbol is undeclared and *possibly* unbound, we currently do not raise an error. This seems
 inconsistent when compared to the "possibly-undeclared-and-possibly-unbound" case.
 
-```py path=mod.py
-def flag() -> bool: ...
+`mod.py`:
+
+```py
+def flag() -> bool:
+    return True
 
 if flag:
     a = 1
@@ -253,7 +276,9 @@ a = None
 
 If a symbol is undeclared *and* unbound, we infer `Unknown` and raise an error.
 
-```py path=mod.py
+`mod.py`:
+
+```py
 if False:
     a: int = 1
 ```

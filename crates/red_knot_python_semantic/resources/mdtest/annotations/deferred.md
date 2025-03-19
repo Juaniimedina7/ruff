@@ -2,7 +2,9 @@
 
 ## Deferred annotations in stubs always resolve
 
-```pyi path=mod.pyi
+`mod.pyi`:
+
+```pyi
 def get_foo() -> Foo: ...
 class Foo: ...
 ```
@@ -36,7 +38,8 @@ If `__future__.annotations` is imported, annotations *are* deferred.
 ```py
 from __future__ import annotations
 
-def get_foo() -> Foo: ...
+def get_foo() -> Foo:
+    return Foo()
 
 class Foo: ...
 

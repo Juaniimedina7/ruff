@@ -6,7 +6,11 @@ If we have an intersection type `A & B` and we get a definitive true/false answe
 types, we can infer that the result for the intersection type is also true/false:
 
 ```py
-class Base: ...
+from typing import Literal
+
+class Base:
+    def __gt__(self, other) -> bool:
+        return False
 
 class Child1(Base):
     def __eq__(self, other) -> Literal[True]:
@@ -106,7 +110,8 @@ given operator:
 
 ```py
 class Container:
-    def __contains__(self, x) -> bool: ...
+    def __contains__(self, x) -> bool:
+        return False
 
 class NonContainer: ...
 
@@ -126,7 +131,8 @@ unsupported for the given operator:
 
 ```py
 class Container:
-    def __contains__(self, x) -> bool: ...
+    def __contains__(self, x) -> bool:
+        return False
 
 class NonContainer: ...
 

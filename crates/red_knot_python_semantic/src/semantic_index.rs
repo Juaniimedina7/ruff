@@ -1,36 +1,41 @@
 use std::iter::FusedIterator;
 use std::sync::Arc;
 
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
-use salsa::plumbing::AsId;
-
 use ruff_db::files::File;
 use ruff_db::parsed::parsed_module;
 use ruff_index::{IndexSlice, IndexVec};
 
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use salsa::plumbing::AsId;
+use salsa::Update;
+
 use crate::module_name::ModuleName;
 use crate::semantic_index::ast_ids::node_key::ExpressionNodeKey;
 use crate::semantic_index::ast_ids::AstIds;
+use crate::semantic_index::attribute_assignment::AttributeAssignments;
 use crate::semantic_index::builder::SemanticIndexBuilder;
 use crate::semantic_index::definition::{Definition, DefinitionNodeKey};
 use crate::semantic_index::expression::Expression;
 use crate::semantic_index::symbol::{
     FileScopeId, NodeWithScopeKey, NodeWithScopeRef, Scope, ScopeId, ScopedSymbolId, SymbolTable,
 };
-use crate::semantic_index::use_def::UseDefMap;
+use crate::semantic_index::use_def::{EagerBindingsKey, ScopedEagerBindingsId, UseDefMap};
 use crate::Db;
 
 pub mod ast_ids;
+pub mod attribute_assignment;
 mod builder;
-pub(crate) mod constraint;
 pub mod definition;
 pub mod expression;
+mod narrowing_constraints;
+pub(crate) mod predicate;
 pub mod symbol;
 mod use_def;
+mod visibility_constraints;
 
 pub(crate) use self::use_def::{
     BindingWithConstraints, BindingWithConstraintsIterator, DeclarationWithConstraint,
-    DeclarationsIterator, ScopedVisibilityConstraintId,
+    DeclarationsIterator,
 };
 
 type SymbolMap = hashbrown::HashMap<ScopedSymbolId, (), FxBuildHasher>;
@@ -40,7 +45,7 @@ type SymbolMap = hashbrown::HashMap<ScopedSymbolId, (), FxBuildHasher>;
 /// Prefer using [`symbol_table`] when working with symbols from a single scope.
 #[salsa::tracked(return_ref, no_eq)]
 pub(crate) fn semantic_index(db: &dyn Db, file: File) -> SemanticIndex<'_> {
-    let _span = tracing::trace_span!("semantic_index", file = %file.path(db)).entered();
+    let _span = tracing::trace_span!("semantic_index", ?file).entered();
 
     let parsed = parsed_module(db.upcast(), file);
 
@@ -55,8 +60,7 @@ pub(crate) fn semantic_index(db: &dyn Db, file: File) -> SemanticIndex<'_> {
 #[salsa::tracked]
 pub(crate) fn symbol_table<'db>(db: &'db dyn Db, scope: ScopeId<'db>) -> Arc<SymbolTable> {
     let file = scope.file(db);
-    let _span =
-        tracing::trace_span!("symbol_table", scope=?scope.as_id(), file=%file.path(db)).entered();
+    let _span = tracing::trace_span!("symbol_table", scope=?scope.as_id(), ?file).entered();
     let index = semantic_index(db, file);
 
     index.symbol_table(scope.file_scope_id(db))
@@ -86,23 +90,41 @@ pub(crate) fn imported_modules<'db>(db: &'db dyn Db, file: File) -> Arc<FxHashSe
 #[salsa::tracked]
 pub(crate) fn use_def_map<'db>(db: &'db dyn Db, scope: ScopeId<'db>) -> Arc<UseDefMap<'db>> {
     let file = scope.file(db);
-    let _span =
-        tracing::trace_span!("use_def_map", scope=?scope.as_id(), file=%file.path(db)).entered();
+    let _span = tracing::trace_span!("use_def_map", scope=?scope.as_id(), ?file).entered();
     let index = semantic_index(db, file);
 
     index.use_def_map(scope.file_scope_id(db))
 }
 
+/// Returns all attribute assignments for a specific class body scope.
+///
+/// Using [`attribute_assignments`] over [`semantic_index`] has the advantage that
+/// Salsa can avoid invalidating dependent queries if this scope's instance attributes
+/// are unchanged.
+#[salsa::tracked]
+pub(crate) fn attribute_assignments<'db>(
+    db: &'db dyn Db,
+    class_body_scope: ScopeId<'db>,
+) -> Option<Arc<AttributeAssignments<'db>>> {
+    let file = class_body_scope.file(db);
+    let index = semantic_index(db, file);
+
+    index
+        .attribute_assignments
+        .get(&class_body_scope.file_scope_id(db))
+        .cloned()
+}
+
 /// Returns the module global scope of `file`.
 #[salsa::tracked]
 pub(crate) fn global_scope(db: &dyn Db, file: File) -> ScopeId<'_> {
-    let _span = tracing::trace_span!("global_scope", file = %file.path(db)).entered();
+    let _span = tracing::trace_span!("global_scope", ?file).entered();
 
     FileScopeId::global().to_scope_id(db, file)
 }
 
 /// The symbol tables and use-def maps for all scopes in a file.
-#[derive(Debug)]
+#[derive(Debug, Update)]
 pub(crate) struct SemanticIndex<'db> {
     /// List of all symbol tables in this file, indexed by scope.
     symbol_tables: IndexVec<FileScopeId, Arc<SymbolTable>>,
@@ -139,6 +161,13 @@ pub(crate) struct SemanticIndex<'db> {
 
     /// Flags about the global scope (code usage impacting inference)
     has_future_annotations: bool,
+
+    /// Maps from class body scopes to attribute assignments that were found
+    /// in methods of that class.
+    attribute_assignments: FxHashMap<FileScopeId, Arc<AttributeAssignments<'db>>>,
+
+    /// Map of all of the eager bindings that appear in this file.
+    eager_bindings: FxHashMap<EagerBindingsKey, ScopedEagerBindingsId>,
 }
 
 impl<'db> SemanticIndex<'db> {
@@ -194,7 +223,7 @@ impl<'db> SemanticIndex<'db> {
     /// Returns the id of the parent scope.
     pub(crate) fn parent_scope_id(&self, scope_id: FileScopeId) -> Option<FileScopeId> {
         let scope = self.scope(scope_id);
-        scope.parent
+        scope.parent()
     }
 
     /// Returns the parent scope of `scope_id`.
@@ -217,7 +246,6 @@ impl<'db> SemanticIndex<'db> {
     }
 
     /// Returns an iterator over all ancestors of `scope`, starting with `scope` itself.
-    #[allow(unused)]
     pub(crate) fn ancestor_scopes(&self, scope: FileScopeId) -> AncestorsIter {
         AncestorsIter::new(self, scope)
     }
@@ -264,6 +292,23 @@ impl<'db> SemanticIndex<'db> {
     pub(super) fn has_future_annotations(&self) -> bool {
         self.has_future_annotations
     }
+
+    /// Returns an iterator of bindings for a particular nested eager scope reference.
+    pub(crate) fn eager_bindings(
+        &self,
+        enclosing_scope: FileScopeId,
+        symbol: &str,
+        nested_scope: FileScopeId,
+    ) -> Option<BindingWithConstraintsIterator<'_, 'db>> {
+        let symbol_id = self.symbol_tables[enclosing_scope].symbol_id_by_name(symbol)?;
+        let key = EagerBindingsKey {
+            enclosing_scope,
+            enclosing_symbol: symbol_id,
+            nested_scope,
+        };
+        let id = self.eager_bindings.get(&key)?;
+        self.use_def_maps[enclosing_scope].eager_bindings(*id)
+    }
 }
 
 pub struct AncestorsIter<'a> {
@@ -286,7 +331,7 @@ impl<'a> Iterator for AncestorsIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let current_id = self.next_id?;
         let current = &self.scopes[current_id];
-        self.next_id = current.parent;
+        self.next_id = current.parent();
 
         Some((current_id, current))
     }
@@ -302,7 +347,7 @@ pub struct DescendentsIter<'a> {
 impl<'a> DescendentsIter<'a> {
     fn new(symbol_table: &'a SemanticIndex, scope_id: FileScopeId) -> Self {
         let scope = &symbol_table.scopes[scope_id];
-        let scopes = &symbol_table.scopes[scope.descendents.clone()];
+        let scopes = &symbol_table.scopes[scope.descendents()];
 
         Self {
             next_id: scope_id + 1,
@@ -352,7 +397,7 @@ impl<'a> Iterator for ChildrenIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.descendents
-            .find(|(_, scope)| scope.parent == Some(self.parent))
+            .find(|(_, scope)| scope.parent() == Some(self.parent))
     }
 }
 
@@ -362,7 +407,7 @@ impl FusedIterator for ChildrenIter<'_> {}
 mod tests {
     use ruff_db::files::{system_path_to_file, File};
     use ruff_db::parsed::parsed_module;
-    use ruff_db::system::DbWithTestSystem;
+    use ruff_db::system::DbWithWritableSystem as _;
     use ruff_python_ast as ast;
     use ruff_text_size::{Ranged, TextRange};
 
@@ -393,7 +438,7 @@ mod tests {
         file: File,
     }
 
-    fn test_case(content: impl ToString) -> TestCase {
+    fn test_case(content: impl AsRef<str>) -> TestCase {
         let mut db = TestDb::new();
         db.write_file("test.py", content).unwrap();
 

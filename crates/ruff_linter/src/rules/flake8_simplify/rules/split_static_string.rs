@@ -3,8 +3,8 @@ use std::cmp::Ordering;
 use ruff_diagnostics::{Applicability, Diagnostic, Edit, Fix, FixAvailability, Violation};
 use ruff_macros::{derive_message_formats, ViolationMetadata};
 use ruff_python_ast::{
-    Expr, ExprCall, ExprContext, ExprList, ExprUnaryOp, StringLiteral, StringLiteralFlags,
-    StringLiteralValue, UnaryOp,
+    str::TripleQuotes, Expr, ExprCall, ExprContext, ExprList, ExprUnaryOp, StringLiteral,
+    StringLiteralFlags, StringLiteralValue, UnaryOp,
 };
 use ruff_text_size::{Ranged, TextRange};
 
@@ -39,6 +39,8 @@ use crate::checkers::ast::Checker;
 /// ).split(",")
 /// ```
 ///
+/// as this is converted to `["a", "b"]` without any of the comments.
+///
 /// ## References
 /// - [Python documentation: `str.split`](https://docs.python.org/3/library/stdtypes.html#str.split)
 #[derive(ViolationMetadata)]
@@ -59,7 +61,7 @@ impl Violation for SplitStaticString {
 
 /// SIM905
 pub(crate) fn split_static_string(
-    checker: &mut Checker,
+    checker: &Checker,
     attr: &str,
     call: &ExprCall,
     str_value: &StringLiteralValue,
@@ -112,7 +114,7 @@ pub(crate) fn split_static_string(
             },
         ));
     }
-    checker.diagnostics.push(diagnostic);
+    checker.report_diagnostic(diagnostic);
 }
 
 fn construct_replacement(elts: &[&str], flags: StringLiteralFlags) -> Expr {
@@ -123,7 +125,17 @@ fn construct_replacement(elts: &[&str], flags: StringLiteralFlags) -> Expr {
                 Expr::from(StringLiteral {
                     value: Box::from(*elt),
                     range: TextRange::default(),
-                    flags,
+                    // intentionally omit the triple quote flag, if set, to avoid strange
+                    // replacements like
+                    //
+                    // ```python
+                    // """
+                    // itemA
+                    // itemB
+                    // itemC
+                    // """.split() # -> ["""itemA""", """itemB""", """itemC"""]
+                    // ```
+                    flags: flags.with_triple_quotes(TripleQuotes::No),
                 })
             })
             .collect(),
@@ -149,11 +161,17 @@ fn split_default(str_value: &StringLiteralValue, max_split: i32) -> Option<Expr>
         }
         Ordering::Equal => {
             let list_items: Vec<&str> = vec![str_value.to_str()];
-            Some(construct_replacement(&list_items, str_value.flags()))
+            Some(construct_replacement(
+                &list_items,
+                str_value.first_literal_flags(),
+            ))
         }
         Ordering::Less => {
             let list_items: Vec<&str> = str_value.to_str().split_whitespace().collect();
-            Some(construct_replacement(&list_items, str_value.flags()))
+            Some(construct_replacement(
+                &list_items,
+                str_value.first_literal_flags(),
+            ))
         }
     }
 }
@@ -177,7 +195,7 @@ fn split_sep(
         }
     };
 
-    construct_replacement(&list_items, str_value.flags())
+    construct_replacement(&list_items, str_value.first_literal_flags())
 }
 
 /// Returns the value of the `maxsplit` argument as an `i32`, if it is a numeric value.

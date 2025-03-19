@@ -64,9 +64,29 @@ c = C()
 c.a = 2
 ```
 
+and similarly here:
+
+```py
+class Base:
+    a: ClassVar[int] = 1
+
+class Derived(Base):
+    if flag():
+        a: int
+
+reveal_type(Derived.a)  # revealed: int
+
+d = Derived()
+
+# error: [invalid-attribute-access]
+d.a = 2
+```
+
 ## Too many arguments
 
 ```py
+from typing import ClassVar
+
 class C:
     # error: [invalid-type-form] "Type qualifier `typing.ClassVar` expects exactly one type parameter"
     x: ClassVar[int, str] = 1
@@ -75,6 +95,8 @@ class C:
 ## Illegal `ClassVar` in type expression
 
 ```py
+from typing import ClassVar
+
 class C:
     # error: [invalid-type-form] "Type qualifier `typing.ClassVar` is not allowed in type expressions (only in annotation expressions)"
     x: ClassVar | int
@@ -86,6 +108,8 @@ class C:
 ## Used outside of a class
 
 ```py
+from typing import ClassVar
+
 # TODO: this should be an error
 x: ClassVar[int] = 1
 ```

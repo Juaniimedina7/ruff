@@ -70,7 +70,7 @@ def _(m: int, n: int):
 
     tuple_slice = t[m:n]
     # TODO: Support overloads... Should be `tuple[Literal[1, 'a', b"b"] | None, ...]`
-    reveal_type(tuple_slice)  # revealed: @Todo(return type)
+    reveal_type(tuple_slice)  # revealed: @Todo(return type of decorated function)
 ```
 
 ## Inheritance
@@ -97,7 +97,7 @@ reveal_type(A.__mro__)  # revealed: tuple[Literal[A], Unknown, Literal[object]]
 `typing.Tuple` can be used interchangeably with `tuple`:
 
 ```py
-from typing import Tuple
+from typing import Any, Tuple
 
 class A: ...
 
@@ -117,7 +117,6 @@ from typing import Tuple
 
 class C(Tuple): ...
 
-# Runtime value: `(C, tuple, typing.Generic, object)`
-# TODO: Add `Generic` to the MRO
-reveal_type(C.__mro__)  # revealed: tuple[Literal[C], Literal[tuple], Unknown, Literal[object]]
+# revealed: tuple[Literal[C], Literal[tuple], Literal[Sequence], Literal[Reversible], Literal[Collection], Literal[Iterable], Literal[Container], @Todo(protocol), Literal[object]]
+reveal_type(C.__mro__)
 ```

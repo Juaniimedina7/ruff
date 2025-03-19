@@ -116,7 +116,9 @@ def union_example(
 Only Literal that is defined in typing and typing_extension modules is detected as the special
 Literal.
 
-```pyi path=other.pyi
+`other.pyi`:
+
+```pyi
 from typing import _SpecialForm
 
 Literal: _SpecialForm
@@ -125,6 +127,13 @@ Literal: _SpecialForm
 ```py
 from other import Literal
 
+# TODO: can we add a subdiagnostic here saying something like:
+#
+#     `other.Literal` and `typing.Literal` have similar names, but are different symbols and don't have the same semantics
+#
+# ?
+#
+# error: [invalid-type-form] "Int literals are not allowed in this context in a type expression"
 a1: Literal[26]
 
 def f():
